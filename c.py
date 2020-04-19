@@ -1,213 +1,158 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-# @Time    : 2019/6/20 下午7:17
-# @Author  : Zhizhou Li
-# @File    : gan_eager.py
+from __future__ import print_function, division
 
-import os
+from keras.datasets import fashion_mnist
+from keras.layers import Input, Dense, Reshape, Flatten, Dropout
+from keras.layers import BatchNormalization, Activation, ZeroPadding2D
+from keras.layers.advanced_activations import LeakyReLU
+from keras.layers.convolutional import UpSampling2D, Conv2D
+from keras.models import Sequential, Model
+from keras.optimizers import Adam
 
-import tensorflow as tf
-from tensorflow.examples.tutorials.mnist import input_data
-import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 
-import config
-
-# Enable Eager Mode
-tf.enable_eager_execution()
-
-# Prepare the data
-mnist = input_data.read_data_sets(os.path.join(config.ROOT_DIR, "MNIST_data"), one_hot=True)
-
-# Mini-batch size
-BATCH_SIZE = 64
-
-# The input size of noise
-Z_dim = 100
-
-# The image size: 28 x 28 = 784
-X_dim = mnist.train.images.shape[1]
-
-# The label size (one-hot): 10
-y_dim = mnist.train.labels.shape[1]
-
-# hidden size of MLPs
-h_dim = 128
+import sys
+import os
+import numpy as np
 
 
-# Custom xavier initialization, which is not the same as xavier_init in tf
-def xavier_init(size):
-    '''
-    :param size: tuple. For weight matrix initialization
-    :return: tf.Tensor. A random-initialized Rank-2 tensor(matrix)
-    '''
-    in_dim = size[0]
-    xavier_stddev = 1. / tf.sqrt(in_dim / 2.)
-    return tf.random_normal(shape=size, stddev=xavier_stddev)
+class GAN():
+    def __init__(self):
+        # --------------------------------- #
+        #   行28，列28，也就是mnist的shape
+        # --------------------------------- #
+        self.img_rows = 28
+        self.img_cols = 28
+        self.channels = 1
+        # 28,28,1
+        self.img_shape = (self.img_rows, self.img_cols, self.channels)
+        self.latent_dim = 100
+        # adam优化器
+        optimizer = Adam(0.0002, 0.5)
+
+        self.discriminator = self.build_discriminator()
+        self.discriminator.compile(loss='binary_crossentropy',
+            optimizer=optimizer,
+            metrics=['accuracy'])
+
+        self.generator = self.build_generator()
 
 
-# Sampling algorithm of noise input
-def sample_Z(m, n):
-    '''
-    :param m: int. Batch size
-    :param n: int. Noise input size
-    :return: np.ndarray. A random-initialized numpy array with shape=(m, n)
-    '''
-    return np.random.uniform(-1.0, 1.0, size=[m, n]).astype(np.float32)
+        gan_input = Input(shape=(self.latent_dim,))
+        img = self.generator(gan_input)
+        # 在训练generate的时候不训练discriminator
+        self.discriminator.trainable = False
+        # 对生成的假图片进行预测
+        validity = self.discriminator(img)
+        self.combined = Model(gan_input, validity)
+        self.combined.compile(loss='binary_crossentropy', optimizer=optimizer)
 
 
-# For result observation from generator
-def plot(samples):
-    '''
-    :param samples: samples: np.ndarray. The output of generator, shape => (batch_size, X_dim)
-    :return: figure created by matplotlib
-    '''
-    fig = plt.figure(figsize=(4, 4))
-    gs = gridspec.GridSpec(4,4)
-    gs.update(wspace=0.05, hspace=0.05)
-    for i, sample in enumerate(samples):
-        ax = plt.subplot(gs[i])
-        plt.axis("off")
-        ax.set_xticklabels([])
-        ax.set_yticklabels([])
-        ax.set_aspect("equal")
-        plt.imshow(sample.reshape(28, 28), cmap="Greys_r")
-    return fig
+    def build_generator(self):
+        # --------------------------------- #
+        #   生成器，输入一串随机数字
+        # --------------------------------- #
+        model = Sequential()
 
+        model.add(Dense(256, input_dim=self.latent_dim))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(BatchNormalization(momentum=0.8))
 
-# Computation of generator loss
-def generator_loss(logits: tf.Tensor):
-    '''
-    :param logits: tf.Tensor. The output of discriminator, shape => (batch_size, 1)
-    :return: tf.Tensor. Average loss of generator
-    '''
-    return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits, labels=tf.ones_like(logits)))
+        model.add(Dense(512))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(BatchNormalization(momentum=0.8))
 
+        model.add(Dense(1024))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(BatchNormalization(momentum=0.8))
 
-# Compuation of discriminator loss
-def discriminator_loss(real_logits: tf.Tensor, fake_logits: tf.Tensor):
-    '''
-    The loss contains two parts: loss from real input and loss from fake input
-    :param real_logits: tf.Tensor. Output of discriminator when input is from real source (natural images)
-    :param fake_logits: tf.Tensor. output of discriminator when input is from fake source (generator output)
-    :return: tf.Tensor. Combination of loss_real and loss_fake
-    '''
-    D_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=real_logits, labels=tf.ones_like(real_logits)))
-    D_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=fake_logits, labels=tf.zeros_like(fake_logits)))
-    return D_loss_real + D_loss_fake
+        model.add(Dense(np.prod(self.img_shape), activation='tanh'))
+        model.add(Reshape(self.img_shape))
 
+        noise = Input(shape=(self.latent_dim,))
+        img = model(noise)
 
-# MLP-based Discriminator
-class Discriminator:
-    def __init__(self, hidden_size: int = h_dim):
-        self.D_W1 = tf.Variable(xavier_init([X_dim + y_dim, hidden_size]))
-        self.D_b1 = tf.Variable(tf.zeros(shape=[hidden_size]))
-        self.D_W2 = tf.Variable(xavier_init([hidden_size, 1]))
-        self.D_b2 = tf.Variable(tf.zeros(shape=[1]))
-        self.theta_D = [self.D_W1, self.D_W2, self.D_b1, self.D_b2]
+        return Model(noise, img)
 
-    def forward(self, image_input, label_input):
-        '''
-        Forward computation
-        :param image_input: Any[np.ndarray, tf.Tensor]. The input image-like sample, shape => [BATCH_SIZE, X_dim]
-        :param label_input: Any[np.ndarray, tf.Tensor]. Shape => [BATCH_SIZE, y_dim], The desired label that controls what kind of image will be generated.
-        :return: tf.Tensor. Shape => [BATCH_SIZE, 1], binary classification
-        '''
-        inputs = tf.concat(axis=1, values=[image_input, label_input])  # shape => [BATCH_SIZE, X_dim + y_dim]
-        D_h1 = tf.nn.relu(tf.matmul(inputs, self.D_W1) + self.D_b1)  # shape => [BATCH_SIZE, hidden_size]
-        D_logit = tf.matmul(D_h1, self.D_W2) + self.D_b2  # shape => [BATCH_SIZE, X_dim]
-        D_prob = tf.nn.sigmoid(D_logit)
-        return D_prob, D_logit
+    def build_discriminator(self):
+        # ----------------------------------- #
+        #   评价器，对输入进来的图片进行评价
+        # ----------------------------------- #
+        model = Sequential()
+        # 输入一张图片
+        model.add(Flatten(input_shape=self.img_shape))
+        model.add(Dense(512))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(Dense(256))
+        model.add(LeakyReLU(alpha=0.2))
+        # 判断真伪
+        model.add(Dense(1, activation='sigmoid'))
 
+        img = Input(shape=self.img_shape)
+        validity = model(img)
 
-# MLP-based Generator
-class Generator:
-    def __init__(self, hidden_size: int = h_dim):
-        self.G_W1 = tf.Variable(xavier_init([Z_dim + y_dim, hidden_size]))
-        self.G_b1 = tf.Variable(tf.zeros(shape=[hidden_size]))
-        self.G_W2 = tf.Variable(xavier_init([hidden_size, X_dim]))
-        self.G_b2 = tf.Variable(tf.zeros(shape=[X_dim]))
-        self.theta_G = [self.G_W1, self.G_W2, self.G_b1, self.G_b2]
+        return Model(img, validity)
 
-    def forward(self, noise_input, label_input):
-        '''
-        Forward computation
-        :param noise_input: np.ndarray. The sampling noise input, shape => [BATCH_SIZE, Z_dim]
-        :param label_input: Any[np.ndarray, tf.Tensor]. Shape => [BATCH_SIZE, y_dim], the desired label that controls what kind of image will be generated.
-        :return: tf.Tensor. Shape => [BATCH_SIZE, X_dim], each element is between 0 to 1
-        '''
-        inputs = tf.concat(axis=1, values=[noise_input, label_input])  # shape => [BATCH_SIZE, Z_dim + y_dim]
-        G_h1 = tf.nn.relu(tf.matmul(inputs, self.G_W1) + self.G_b1)  # shape => [BATCH_SIZE, hidden_size]
-        G_log_prob = tf.matmul(G_h1, self.G_W2) + self.G_b2  # shape => [BATCH_SIZE, X_dim]
-        G_prob = tf.nn.sigmoid(G_log_prob)
-        return G_prob
+    def train(self, epochs, batch_size=128, sample_interval=50):
+        # 获得数据
+        (X_train, _), (_, _) = fashion_mnist.load_data()
 
+        # 进行标准化
+        X_train = X_train / 127.5 - 1.
+        X_train = np.expand_dims(X_train, axis=3)
 
-def main():
-    # setup the generator and discriminator
-    generator = Generator()
-    discriminator = Discriminator()
+        # 创建标签
+        valid = np.ones((batch_size, 1))
+        fake = np.zeros((batch_size, 1))
 
-    # setup the optimizers for two MLP networks
-    D_solver = tf.train.AdamOptimizer()
-    G_solver = tf.train.AdamOptimizer()
+        for epoch in range(epochs):
 
-    out_path = os.path.join(config.OUTPUT_DIR, "conditional_gan")
-    if not os.path.exists(out_path):
-        os.makedirs(out_path)
+            # --------------------------- #
+            #   随机选取batch_size个图片
+            #   对discriminator进行训练
+            # --------------------------- #
+            idx = np.random.randint(0, X_train.shape[0], batch_size)
+            imgs = X_train[idx]
 
-    # Training start!
-    i = 0
-    for it in range(1000000):
-        if it % 1000 == 0:
-            n_sample = 16
-            Z_sample = sample_Z(n_sample, Z_dim)
-            y_sample = np.zeros(shape=[n_sample, y_dim])
-            y_sample[:, 6] = 1
-            samples = generator.forward(Z_sample, y_sample)
-            fig = plot(samples.numpy())
-            file_path = os.path.join(out_path, "{}.png".format(str(i).zfill(3)))
-            plt.savefig(file_path, bbox_inches="tight")
-            i += 1
-            plt.close(fig)
+            noise = np.random.normal(0, 1, (batch_size, self.latent_dim))
 
-        # read data from data_set. This time we also need the labels.
-        images, labels = mnist.train.next_batch(BATCH_SIZE)
-        images = images.astype(np.float32)
-        labels = labels.astype(np.float32)
+            gen_imgs = self.generator.predict(noise)
 
-        # acquire noise samples
-        Z_sample = sample_Z(BATCH_SIZE, Z_dim)
+            # 单次梯度跟新
+            d_loss_real = self.discriminator.train_on_batch(imgs, valid)
+            d_loss_fake = self.discriminator.train_on_batch(gen_imgs, fake)
+            d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
 
-        # forward computing of discriminator
-        with tf.GradientTape() as tape_d:
-            g_sample = generator.forward(Z_sample, labels)
-            d_real, d_logit_real = discriminator.forward(images, labels)
-            d_fake, d_logit_fake = discriminator.forward(g_sample, labels)
-            d_loss = discriminator_loss(d_logit_real, d_logit_fake)
+            # --------------------------- #
+            #  训练generator
+            # --------------------------- #
+            noise = np.random.normal(0, 1, (batch_size, self.latent_dim))
+            g_loss = self.combined.train_on_batch(noise, valid)
+            print ("%d [D loss: %f, acc.: %.2f%%] [G loss: %f]" % (epoch, d_loss[0], 100*d_loss[1], g_loss))
 
-        # backward propagation of discriminator
-        grads = tape_d.gradient(d_loss, discriminator.theta_D)
-        D_solver.apply_gradients(zip(grads, discriminator.theta_D), global_step=tf.train.get_or_create_global_step())
+            if epoch % sample_interval == 0:
+                self.sample_images(epoch)
 
-        # forward computing of generator
-        with tf.GradientTape() as tape_g:
-            g_sample = generator.forward(Z_sample, labels)
-            d_fake, d_logit_fake = discriminator.forward(g_sample, labels)
-            g_loss = generator_loss(d_logit_fake)
+    def sample_images(self, epoch):
 
-        # backward propagation of generator
-        grads = tape_g.gradient(g_loss, generator.theta_G)
-        G_solver.apply_gradients(zip(grads, generator.theta_G), global_step=tf.train.get_or_create_global_step())
+        r, c = 5, 5
+        noise = np.random.normal(0, 1, (r * c, self.latent_dim))
+        gen_imgs = self.generator.predict(noise)
 
-        # logs every 1000 iteration
-        if it % 1000 == 0:
-            print("Iter: {}".format(it))
-            print("D loss: {:.4}".format(d_loss))
-            print("G loss: {:.4}".format(g_loss))
-            print()
+        gen_imgs = 0.5 * gen_imgs + 0.5
+
+        fig, axs = plt.subplots(r, c)
+        cnt = 0
+        for i in range(r):
+            for j in range(c):
+                axs[i,j].imshow(gen_imgs[cnt, :,:,0], cmap='gray')
+                axs[i,j].axis('off')
+                cnt += 1
+        fig.savefig("fashion_mnist/%d.png" % epoch)
+        plt.close()
 
 
 if __name__ == '__main__':
-    main()
+    if not os.path.exists("./fashion_mnist"):
+        os.makedirs("./fashion_mnist")
+    gan = GAN()
+    gan.train(epochs=300, batch_size=256, sample_interval=5)
