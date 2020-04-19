@@ -99,7 +99,6 @@ class GAN():
         # 进行标准化
         X_train = X_train / 127.5 - 1.
         X_train = np.expand_dims(X_train, axis=3)
-
         # 创建标签
         valid = np.ones((batch_size, 1))
         fake = np.zeros((batch_size, 1))
