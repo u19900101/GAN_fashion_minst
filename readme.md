@@ -1,9 +1,9 @@
 # 目标： 利用GAN生成生成fashion_mnist图片
 ## 整体效果
 ### 1.初始化的随机噪声
-![kkk   ](fashion_mnist/0.png "binaryTree")
+![kkk   ](image/0.png "binaryTree")
 ### 2.经过3000次迭代后的fashion_mnist
-![](fashion_mnist/2995.png)
+![](image/2995.png)
 **已经初具外形**
 
 ## 实现方式：
