@@ -2,12 +2,13 @@ from __future__ import print_function, division
 
 import time
 
+from keras.callbacks import ModelCheckpoint
 from keras.datasets import fashion_mnist
 from keras.layers import Input, Dense, Reshape, Flatten, Dropout, GlobalAveragePooling2D
 from keras.layers import BatchNormalization, Activation, ZeroPadding2D
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers.convolutional import UpSampling2D, Conv2D
-from keras.models import Sequential, Model
+from keras.models import Sequential, Model, load_model
 from keras.optimizers import Adam
 
 import matplotlib.pyplot as plt
@@ -38,17 +39,19 @@ class GAN():
             optimizer=optimizer,
             metrics=['accuracy'])
         self.generator = self.build_generator()
-
         z = Input(shape=(self.latent_dim,))
         img = self.generator(z)
         # 在训练generate的时候不训练discriminator
         self.discriminator.trainable = False
         # 对生成的假图片进行预测
         validity = self.discriminator(img)
-        # Model(Input
+
         self.combined = Model(z, validity)
         self.combined.compile(loss='binary_crossentropy', optimizer=optimizer)
 
+        # filepath2 = "weights.best.hdf5"
+        # checkpoint2 = ModelCheckpoint(filepath2, monitor='val_acc', verbose=1, save_best_only=True, mode='max')
+        # callbacks_list = [checkpoint2]
 
     def build_generator(self):
         # --------------------------------- #
@@ -81,7 +84,7 @@ class GAN():
         model.add(Conv2D(self.channels, kernel_size=3, padding="same"))
         model.add(Activation("tanh"))
 
-        model.summary()
+        # model.summary()
         noise = Input(shape=(self.latent_dim,))
         img = model(noise)
 
@@ -110,7 +113,7 @@ class GAN():
         # 全连接
         model.add(Dense(1, activation='sigmoid'))
 
-        model.summary()
+        # model.summary()
 
         img = Input(shape=self.img_shape)
         validity = model(img)
@@ -127,7 +130,7 @@ class GAN():
         # 创建标签
         valid = np.ones((batch_size, 1))
         fake = np.zeros((batch_size, 1))
-
+        logs = []
         for epoch in range(epochs):
 
             # --------------------------- #
@@ -156,6 +159,21 @@ class GAN():
             if epoch % sample_interval == 0:
                 self.sample_images(epoch)
 
+            if epoch % 5 == 0:
+                logs.append([epoch, d_loss[0], d_loss[1], g_loss])
+        self.showlogs(logs)
+
+    def showlogs(self, logs):
+        logs = np.array(logs)
+        names = ["d_loss", "d_acc", "g_loss"]
+        for i in range(3):
+            plt.subplot(2, 2, i + 1)
+            plt.plot(logs[:, 0], logs[:, i + 1])
+            plt.xlabel("epoch")
+            plt.ylabel(names[i])
+        plt.tight_layout()
+        plt.show()
+
     def sample_images(self, epoch):
 
         r, c = 5, 5
@@ -180,7 +198,7 @@ if __name__ == '__main__':
         os.makedirs("./fashion_mnist_withcnn")
     start = time.time()
     gan = GAN()
-    epochs = 300
+    epochs = 50
     gan.train(epochs=epochs, batch_size=256, sample_interval=5)
     end = time.time()
     print(end-start)
