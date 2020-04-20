@@ -1,5 +1,7 @@
 from __future__ import print_function, division
 
+import time
+
 from keras.datasets import fashion_mnist
 from keras.layers import Input, Dense, Reshape, Flatten, Dropout
 from keras.layers import BatchNormalization, Activation, ZeroPadding2D
@@ -14,7 +16,9 @@ import sys
 import os
 import numpy as np
 
+# https://blog.csdn.net/weixin_44791964/article/details/103729797 原文链接
 
+# 使用普通的神经网络进行 数据集的生成
 class GAN():
     def __init__(self):
         # --------------------------------- #
@@ -33,17 +37,16 @@ class GAN():
         self.discriminator.compile(loss='binary_crossentropy',
             optimizer=optimizer,
             metrics=['accuracy'])
-
         self.generator = self.build_generator()
 
-
-        gan_input = Input(shape=(self.latent_dim,))
-        img = self.generator(gan_input)
+        z = Input(shape=(self.latent_dim,))
+        img = self.generator(z)
         # 在训练generate的时候不训练discriminator
         self.discriminator.trainable = False
         # 对生成的假图片进行预测
         validity = self.discriminator(img)
-        self.combined = Model(gan_input, validity)
+        # Model(Input
+        self.combined = Model(z, validity)
         self.combined.compile(loss='binary_crossentropy', optimizer=optimizer)
 
 
@@ -121,6 +124,13 @@ class GAN():
             d_loss_fake = self.discriminator.train_on_batch(gen_imgs, fake)
             d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
 
+            # 修改提升的效果不明显
+            # inputimg = np.vstack((imgs, gen_imgs))
+            # lable = np.vstack((valid, fake))
+            # d_loss = self.discriminator.train_on_batch(inputimg, lable)
+
+            # d_loss = 0.5 * np.add(loss[:imgs.shape[0]], loss[imgs.shape[0]:])
+
             # --------------------------- #
             #  训练generator
             # --------------------------- #
@@ -153,5 +163,12 @@ class GAN():
 if __name__ == '__main__':
     if not os.path.exists("./fashion_mnist"):
         os.makedirs("./fashion_mnist")
+    start = time.time()
     gan = GAN()
-    gan.train(epochs=300, batch_size=256, sample_interval=5)
+    gan.train(epochs=3000, batch_size=256, sample_interval=5)
+    end = time.time()
+    print(end-start)
+    file = open('timelog.txt',"a")
+    curT = time.strftime("%Y-%m-%d %H:%M:%S  ", time.localtime())
+    file.write(curT+str(end-start)+'\n')
+    file.close()
