@@ -17,3 +17,8 @@
 # 利用DCGAN 
 - 将原全连接网络修改为cnn网络 训练300次生成的图片  噪音点变少了
 ![](image/dcgan_295.png "dcgan")
+
+# SRGAN 超分辨率实现
+![](image/srgan.png "dcgan")
+实现的具体效果可看kaggle小小项目
+https://www.kaggle.com/u19900101/fork-of-srgan-predict/output
